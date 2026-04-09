@@ -7,21 +7,21 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// RequestLogger returns a Fiber middleware that logs the HTTP method, path,
-// response status code, and request latency for every request.
-func RequestLogger() fiber.Handler {
+// LoggerMiddleware logs each request with method, path, status code, and duration.
+func LoggerMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
 
-		// Process request.
 		err := c.Next()
 
-		latency := time.Since(start)
-		log.Printf("%s %s %d %v",
+		duration := time.Since(start)
+		status := c.Response().StatusCode()
+
+		log.Printf("%-7s %s -> %d (%s)",
 			c.Method(),
 			c.Path(),
-			c.Response().StatusCode(),
-			latency,
+			status,
+			duration.Round(time.Microsecond),
 		)
 
 		return err

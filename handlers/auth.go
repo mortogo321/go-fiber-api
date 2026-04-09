@@ -1,149 +1,134 @@
 package handlers
 
 import (
-	"net/http"
+	"time"
 
-	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/mortogo321/go-fiber-api/config"
-	"github.com/mortogo321/go-fiber-api/models"
-	"github.com/mortogo321/go-fiber-api/utils"
+	"github.com/mor-tesla/go-fiber-api/config"
+	"github.com/mor-tesla/go-fiber-api/models"
+	"github.com/mor-tesla/go-fiber-api/utils"
 )
 
-var validate = validator.New()
-
-// AuthHandler groups all authentication-related handlers.
 type AuthHandler struct {
-	DB  *gorm.DB
-	Cfg *config.Config
+	db  *gorm.DB
+	cfg *config.Config
 }
 
-// NewAuthHandler returns a ready-to-use AuthHandler.
 func NewAuthHandler(db *gorm.DB, cfg *config.Config) *AuthHandler {
-	return &AuthHandler{DB: db, Cfg: cfg}
+	return &AuthHandler{db: db, cfg: cfg}
 }
 
-// RegisterInput represents the expected JSON body for registration.
-type RegisterInput struct {
+type RegisterRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=8"`
-	Name     string `json:"name" validate:"required"`
+	Name     string `json:"name" validate:"required,min=2"`
 }
 
-// LoginInput represents the expected JSON body for login.
-type LoginInput struct {
+type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required"`
 }
 
-// Register creates a new user account, hashes the password with bcrypt, and
-// returns a signed JWT.
+type LoginResponse struct {
+	Token string              `json:"token"`
+	User  models.UserResponse `json:"user"`
+}
+
+// Register creates a new user account with a hashed password.
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
-	var input RegisterInput
-	if err := c.BodyParser(&input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, "invalid request body")
+	var req RegisterRequest
+	if err := c.BodyParser(&req); err != nil {
+		return utils.ErrorResponse(c, fiber.StatusBadRequest, "invalid request body")
 	}
 
-	if err := validate.Struct(input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, err.Error())
+	if errs := utils.ValidateStruct(req); errs != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"success": false,
+			"errors":  errs,
+		})
 	}
 
-	// Check for existing user.
 	var existing models.User
-	if err := h.DB.Where("email = ?", input.Email).First(&existing).Error; err == nil {
-		return utils.Error(c, http.StatusConflict, "email already registered")
+	if result := h.db.Where("email = ?", req.Email).First(&existing); result.Error == nil {
+		return utils.ErrorResponse(c, fiber.StatusConflict, "email already registered")
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return utils.Error(c, http.StatusInternalServerError, "failed to hash password")
+		return utils.ErrorResponse(c, fiber.StatusInternalServerError, "failed to hash password")
 	}
 
 	user := models.User{
-		Email:    input.Email,
-		Password: string(hashedPassword),
-		Name:     input.Name,
+		Email:    req.Email,
+		Password: string(hashed),
+		Name:     req.Name,
 		Role:     "user",
 	}
 
-	if err := h.DB.Create(&user).Error; err != nil {
-		return utils.Error(c, http.StatusInternalServerError, "failed to create user")
+	if result := h.db.Create(&user); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusInternalServerError, "failed to create user")
 	}
 
-	token, err := utils.GenerateToken(user.ID, user.Role, h.Cfg.JWTSecret, h.Cfg.JWTExpiry)
-	if err != nil {
-		return utils.Error(c, http.StatusInternalServerError, "failed to generate token")
-	}
-
-	return utils.Success(c, fiber.Map{
-		"token": token,
-		"user": fiber.Map{
-			"id":    user.ID,
-			"email": user.Email,
-			"name":  user.Name,
-			"role":  user.Role,
-		},
-	})
+	return utils.SuccessResponse(c, fiber.StatusCreated, "user registered successfully", user.ToResponse())
 }
 
-// Login authenticates a user by email and password and returns a signed JWT.
+// Login authenticates a user and returns a JWT token.
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
-	var input LoginInput
-	if err := c.BodyParser(&input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, "invalid request body")
+	var req LoginRequest
+	if err := c.BodyParser(&req); err != nil {
+		return utils.ErrorResponse(c, fiber.StatusBadRequest, "invalid request body")
 	}
 
-	if err := validate.Struct(input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, err.Error())
+	if errs := utils.ValidateStruct(req); errs != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"success": false,
+			"errors":  errs,
+		})
 	}
 
 	var user models.User
-	if err := h.DB.Where("email = ?", input.Email).First(&user).Error; err != nil {
-		return utils.Error(c, http.StatusUnauthorized, "invalid credentials")
+	if result := h.db.Where("email = ?", req.Email).First(&user); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusUnauthorized, "invalid credentials")
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
-		return utils.Error(c, http.StatusUnauthorized, "invalid credentials")
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		return utils.ErrorResponse(c, fiber.StatusUnauthorized, "invalid credentials")
 	}
 
-	token, err := utils.GenerateToken(user.ID, user.Role, h.Cfg.JWTSecret, h.Cfg.JWTExpiry)
+	claims := jwt.MapClaims{
+		"user_id": user.ID,
+		"role":    user.Role,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+		"iat":     time.Now().Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(h.cfg.JWTSecret))
 	if err != nil {
-		return utils.Error(c, http.StatusInternalServerError, "failed to generate token")
+		return utils.ErrorResponse(c, fiber.StatusInternalServerError, "failed to generate token")
 	}
 
-	return utils.Success(c, fiber.Map{
-		"token": token,
-		"user": fiber.Map{
-			"id":    user.ID,
-			"email": user.Email,
-			"name":  user.Name,
-			"role":  user.Role,
-		},
+	return utils.SuccessResponse(c, fiber.StatusOK, "login successful", LoginResponse{
+		Token: tokenString,
+		User:  user.ToResponse(),
 	})
 }
 
-// GetProfile returns the currently authenticated user's profile based on the
-// JWT claims stored in Fiber locals by the auth middleware.
+// GetProfile returns the current authenticated user's profile.
 func (h *AuthHandler) GetProfile(c *fiber.Ctx) error {
-	userID, ok := c.Locals("userID").(uint)
-	if !ok {
-		return utils.Error(c, http.StatusUnauthorized, "unauthorized")
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return utils.ErrorResponse(c, fiber.StatusUnauthorized, "unauthorized")
 	}
 
 	var user models.User
-	if err := h.DB.First(&user, userID).Error; err != nil {
-		return utils.Error(c, http.StatusNotFound, "user not found")
+	if result := h.db.First(&user, userID); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusNotFound, "user not found")
 	}
 
-	return utils.Success(c, fiber.Map{
-		"id":         user.ID,
-		"email":      user.Email,
-		"name":       user.Name,
-		"role":       user.Role,
-		"created_at": user.CreatedAt,
-		"updated_at": user.UpdatedAt,
-	})
+	return utils.SuccessResponse(c, fiber.StatusOK, "profile retrieved", user.ToResponse())
 }

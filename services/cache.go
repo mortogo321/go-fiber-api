@@ -7,63 +7,39 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// CacheService wraps a Redis client and exposes simple cache operations used
-// throughout the application.
+// CacheService wraps a Redis client with convenience methods for cache operations.
 type CacheService struct {
 	client *redis.Client
 }
 
-// NewCacheService creates a CacheService backed by the given Redis client.
+// NewCacheService creates a new CacheService backed by the given Redis client.
 func NewCacheService(client *redis.Client) *CacheService {
 	return &CacheService{client: client}
 }
 
-// Get retrieves a cached value by key. Returns an empty string and a non-nil
-// error on a cache miss.
-func (s *CacheService) Get(key string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+// Get retrieves a cached value by key. Returns an empty string and an error on miss.
+func (s *CacheService) Get(ctx context.Context, key string) (string, error) {
 	return s.client.Get(ctx, key).Result()
 }
 
-// Set stores a key-value pair with the specified TTL.
-func (s *CacheService) Set(key string, value string, ttl time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+// Set stores a value in the cache with the given TTL.
+func (s *CacheService) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
 	return s.client.Set(ctx, key, value, ttl).Err()
 }
 
-// Delete removes a single key from the cache.
-func (s *CacheService) Delete(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+// Delete removes a specific key from the cache.
+func (s *CacheService) Delete(ctx context.Context, key string) error {
 	return s.client.Del(ctx, key).Err()
 }
 
-// DeleteByPattern removes all keys matching the given glob pattern. This uses
-// SCAN internally to avoid blocking Redis with a KEYS command.
-func (s *CacheService) DeleteByPattern(pattern string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	var cursor uint64
-	for {
-		keys, nextCursor, err := s.client.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
+// InvalidatePattern removes all keys matching the given glob pattern.
+// Uses SCAN internally to avoid blocking the Redis server on large key spaces.
+func (s *CacheService) InvalidatePattern(ctx context.Context, pattern string) error {
+	iter := s.client.Scan(ctx, 0, pattern, 100).Iterator()
+	for iter.Next(ctx) {
+		if err := s.client.Del(ctx, iter.Val()).Err(); err != nil {
 			return err
 		}
-
-		if len(keys) > 0 {
-			if err := s.client.Del(ctx, keys...).Err(); err != nil {
-				return err
-			}
-		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
 	}
-
-	return nil
+	return iter.Err()
 }

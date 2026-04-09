@@ -1,55 +1,80 @@
 # Go Fiber REST API
 
-A production-ready REST API proof-of-concept built with [Go Fiber](https://gofiber.io/), demonstrating JWT authentication, PostgreSQL persistence via GORM, Redis cache-aside caching, and a Docker multi-stage build.
+A production-ready REST API proof of concept built with Go Fiber v2, featuring JWT authentication, PostgreSQL with GORM, Redis caching, and Docker multi-stage builds.
+
+## Architecture
+
+```
++---------------------------------------------------------+
+|                      Client                             |
++----------------------+----------------------------------+
+                       | HTTP
++----------------------v----------------------------------+
+|                   Go Fiber v2                           |
+|  +----------+  +----------+  +-----------------------+  |
+|  |  Logger  |  |   JWT    |  |     Validator         |  |
+|  |Middleware |  |Middleware|  |                       |  |
+|  +----------+  +----------+  +-----------------------+  |
++---------------------------------------------------------+
+|                    Handlers                             |
+|  +--------------+  +--------------------------------+   |
+|  |  Auth Handler |  |       Product Handler          |   |
+|  +------+-------+  +----------+---------------------+   |
++---------+----------------------+-------------------------+
+|         |        Services      |                         |
+|         |  +-------------------+                         |
+|         |  |   Cache Service   |                         |
+|         |  +---------+---------+                         |
++---------+------------+-----------------------------------+
+|         |            |         Data Layer                |
+|  +------v-------+  +-v--------------+                   |
+|  |  PostgreSQL  |  |     Redis      |                   |
+|  |   (GORM)     |  |   (Cache)      |                   |
+|  +--------------+  +----------------+                   |
++---------------------------------------------------------+
+```
 
 ## Project Structure
 
 ```
 .
-├── config/          # Environment-based configuration
-│   └── config.go
-├── database/        # Database and cache client initialization
-│   ├── database.go
-│   └── redis.go
-├── handlers/        # HTTP request handlers
-│   ├── auth.go
-│   └── product.go
-├── middleware/      # Fiber middleware (JWT guard, request logger)
-│   ├── auth.go
-│   └── logger.go
-├── models/          # GORM models
-│   ├── user.go
-│   └── product.go
-├── services/        # Shared services (cache helper)
-│   └── cache.go
-├── utils/           # Helpers (response builders, JWT utilities)
-│   ├── jwt.go
-│   └── response.go
-├── docker-compose.yml
-├── Dockerfile
-├── .env.example
-├── .gitignore
-├── go.mod
-├── go.sum
-└── main.go
+├── main.go                 # Application entry point, route setup, graceful shutdown
+├── go.mod                  # Go module and dependencies
+├── config/
+│   └── config.go           # Environment-based configuration
+├── database/
+│   ├── database.go         # GORM PostgreSQL connection + AutoMigrate
+│   └── redis.go            # Redis client initialization
+├── models/
+│   ├── user.go             # User model with GORM tags
+│   └── product.go          # Product model with GORM tags
+├── handlers/
+│   ├── auth.go             # Register, Login, GetProfile
+│   └── product.go          # CRUD with Redis cache-aside
+├── middleware/
+│   ├── auth.go             # JWT Bearer token validation
+│   └── logger.go           # Request logging (method, path, status, duration)
+├── services/
+│   └── cache.go            # Redis cache wrapper (Get, Set, Delete, InvalidatePattern)
+├── utils/
+│   ├── response.go         # Standardized JSON response helpers
+│   └── validator.go        # Struct validation with go-playground/validator
+├── Dockerfile              # Multi-stage build (golang:1.23-alpine -> alpine:3.19)
+├── docker-compose.yml      # App + PostgreSQL 17 + Redis 7
+├── .env.example            # Environment variable template
+└── .gitignore
 ```
 
-## API Endpoints
+## Getting Started
 
-| Method | Path               | Auth     | Description             |
-|--------|--------------------|----------|-------------------------|
-| POST   | `/api/auth/register` | Public   | Register a new user     |
-| POST   | `/api/auth/login`    | Public   | Login and receive JWT   |
-| GET    | `/api/auth/profile`  | Bearer   | Get current user profile|
-| GET    | `/api/products`      | Bearer   | List products (cached)  |
-| GET    | `/api/products/:id`  | Bearer   | Get product by ID (cached) |
-| POST   | `/api/products`      | Bearer   | Create a product        |
-| PUT    | `/api/products/:id`  | Bearer   | Update a product        |
-| DELETE | `/api/products/:id`  | Bearer   | Delete a product        |
+### Prerequisites
 
-## Quick Start
+- Go 1.23+
+- Docker & Docker Compose
+- PostgreSQL 17 (or use Docker)
+- Redis 7 (or use Docker)
 
-### With Docker Compose (recommended)
+### Run with Docker Compose
 
 ```bash
 cp .env.example .env
@@ -58,41 +83,55 @@ docker-compose up --build
 
 The API will be available at `http://localhost:3000`.
 
-### Local Development
+### Run Locally
 
 ```bash
-# Ensure PostgreSQL and Redis are running
 cp .env.example .env
-# Edit .env with your local connection details
-go mod tidy
+# Edit .env with your local DB and Redis settings
+
+go mod download
 go run main.go
 ```
 
-## Architecture Decisions
+## API Endpoints
 
-### Why Fiber?
+### Public
 
-Fiber is built on top of **fasthttp**, the fastest HTTP engine for Go. It provides an Express-like API that is intuitive for developers coming from Node.js while delivering significantly better throughput than net/http-based frameworks. For a REST API POC where raw performance and developer ergonomics both matter, Fiber strikes the right balance.
+| Method | Path              | Description          |
+|--------|-------------------|----------------------|
+| POST   | `/api/auth/register` | Register a new user  |
+| POST   | `/api/auth/login`    | Login and get JWT    |
+| GET    | `/api/health`        | Health check         |
 
-### Why GORM?
+### Protected (Bearer Token Required)
 
-GORM is the most mature ORM in the Go ecosystem. It handles migrations, associations, hooks, and query building with a clean chainable API. For a POC that needs to demonstrate relational data (users owning products) without hand-writing SQL, GORM reduces boilerplate while remaining transparent about the queries it generates.
+| Method | Path                   | Description               |
+|--------|------------------------|---------------------------|
+| GET    | `/api/auth/profile`    | Get current user profile  |
+| GET    | `/api/products`        | List products (cached)    |
+| GET    | `/api/products/:id`    | Get product by ID (cached)|
+| POST   | `/api/products`        | Create a product          |
+| PUT    | `/api/products/:id`    | Update a product          |
+| DELETE | `/api/products/:id`    | Delete a product          |
 
-### Cache-Aside Pattern
+## Key Design Patterns
 
-The product endpoints implement a **cache-aside** (lazy-loading) strategy:
+- **Cache-aside**: Check Redis first, fallback to PostgreSQL, then populate cache
+- **JWT authentication**: Stateless auth with user ID and role in claims
+- **Input validation**: Struct tag validation via `go-playground/validator`
+- **Standardized responses**: Consistent JSON envelope for success, error, and pagination
+- **Graceful shutdown**: Signal-based (`SIGINT`, `SIGTERM`) with connection cleanup
+- **Multi-stage Docker build**: Minimal production image (~15MB)
 
-1. **Read path** -- check Redis first; on a cache miss, query PostgreSQL, then populate Redis with a TTL.
-2. **Write path** -- after any mutation (create/update/delete), invalidate the relevant cache keys so subsequent reads fetch fresh data.
+## Environment Variables
 
-This keeps reads fast without risking stale data on writes. It is the simplest caching pattern to reason about and is appropriate for workloads where reads vastly outnumber writes.
-
-### Graceful Shutdown
-
-The application listens for `SIGINT` and `SIGTERM`, then calls `app.ShutdownWithTimeout` to drain in-flight requests before closing database and Redis connections. This ensures zero dropped requests during deployments.
-
-### Docker Multi-Stage Build
-
-The Dockerfile uses a two-stage build:
-- **Builder stage** -- compiles a statically-linked binary with `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
-- **Production stage** -- copies the binary into a minimal `alpine:3.20` image running as a non-root user, producing a final image under 20 MB.
+| Variable      | Description             | Default          |
+|---------------|-------------------------|------------------|
+| `PORT`        | Server port             | `3000`           |
+| `DB_HOST`     | PostgreSQL host         | `localhost`      |
+| `DB_PORT`     | PostgreSQL port         | `5432`           |
+| `DB_USER`     | PostgreSQL user         | `postgres`       |
+| `DB_PASSWORD` | PostgreSQL password     | `postgres`       |
+| `DB_NAME`     | PostgreSQL database     | `gofiber`        |
+| `REDIS_URL`   | Redis connection string | `localhost:6379` |
+| `JWT_SECRET`  | JWT signing key         | `changeme`       |

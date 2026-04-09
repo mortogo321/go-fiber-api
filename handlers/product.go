@@ -3,226 +3,236 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 
-	"github.com/mortogo321/go-fiber-api/models"
-	"github.com/mortogo321/go-fiber-api/services"
-	"github.com/mortogo321/go-fiber-api/utils"
+	"github.com/mor-tesla/go-fiber-api/models"
+	"github.com/mor-tesla/go-fiber-api/services"
+	"github.com/mor-tesla/go-fiber-api/utils"
 )
 
-const (
-	productsCacheKey = "products:list"
-	productCacheKey  = "products:%d"
-	productCacheTTL  = 5 * time.Minute
-)
-
-// ProductHandler groups product CRUD handlers.
 type ProductHandler struct {
-	DB    *gorm.DB
-	Cache *services.CacheService
+	db    *gorm.DB
+	cache *services.CacheService
 }
 
-// NewProductHandler returns a ready-to-use ProductHandler.
 func NewProductHandler(db *gorm.DB, cache *services.CacheService) *ProductHandler {
-	return &ProductHandler{DB: db, Cache: cache}
+	return &ProductHandler{db: db, cache: cache}
 }
 
-// CreateProductInput represents the expected JSON body for product creation.
-type CreateProductInput struct {
-	Name        string  `json:"name" validate:"required"`
+type CreateProductRequest struct {
+	Name        string  `json:"name" validate:"required,min=2"`
 	Description string  `json:"description"`
 	Price       float64 `json:"price" validate:"required,gt=0"`
-	SKU         string  `json:"sku"`
+	SKU         string  `json:"sku" validate:"required,min=3"`
 }
 
-// UpdateProductInput represents the expected JSON body for product updates.
-type UpdateProductInput struct {
-	Name        *string  `json:"name"`
+type UpdateProductRequest struct {
+	Name        *string  `json:"name" validate:"omitempty,min=2"`
 	Description *string  `json:"description"`
 	Price       *float64 `json:"price" validate:"omitempty,gt=0"`
-	SKU         *string  `json:"sku"`
+	SKU         *string  `json:"sku" validate:"omitempty,min=3"`
 }
 
-// GetProducts returns a paginated list of products. It checks Redis first
-// (cache-aside); on a miss it queries PostgreSQL and populates the cache.
+const (
+	productsCacheKey = "products:all"
+	productCacheKey  = "products:%d"
+	cacheTTL         = 5 * time.Minute
+)
+
+// GetProducts returns all products with Redis cache-aside pattern.
 func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
+	// Try cache first
+	cached, err := h.cache.Get(c.Context(), productsCacheKey)
+	if err == nil && cached != "" {
+		var products []models.Product
+		if err := json.Unmarshal([]byte(cached), &products); err == nil {
+			return utils.SuccessResponse(c, fiber.StatusOK, "products retrieved (cached)", products)
+		}
+	}
+
+	// Fallback to database
+	var products []models.Product
 	page, _ := strconv.Atoi(c.Query("page", "1"))
-	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 100 {
-		limit = 10
+		limit = 20
 	}
 	offset := (page - 1) * limit
 
-	cacheKey := fmt.Sprintf("%s:page:%d:limit:%d", productsCacheKey, page, limit)
-
-	// Cache-aside: try Redis first.
-	cached, err := h.Cache.Get(cacheKey)
-	if err == nil && cached != "" {
-		var result fiber.Map
-		if json.Unmarshal([]byte(cached), &result) == nil {
-			return utils.Success(c, result)
-		}
-	}
-
-	// Cache miss -- query database.
-	var products []models.Product
 	var total int64
+	h.db.Model(&models.Product{}).Count(&total)
 
-	h.DB.Model(&models.Product{}).Count(&total)
-	h.DB.Preload("User").Offset(offset).Limit(limit).Order("id desc").Find(&products)
-
-	response := fiber.Map{
-		"products": products,
-		"total":    total,
-		"page":     page,
-		"limit":    limit,
+	if result := h.db.Offset(offset).Limit(limit).Order("created_at DESC").Find(&products); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusInternalServerError, "failed to fetch products")
 	}
 
-	// Populate cache.
-	if data, err := json.Marshal(response); err == nil {
-		_ = h.Cache.Set(cacheKey, string(data), productCacheTTL)
+	// Populate cache
+	if data, err := json.Marshal(products); err == nil {
+		_ = h.cache.Set(c.Context(), productsCacheKey, string(data), cacheTTL)
 	}
 
-	return utils.Paginated(c, products, total, page, limit)
+	return utils.PaginateResponse(c, fiber.StatusOK, "products retrieved", products, page, limit, total)
 }
 
-// GetProduct returns a single product by ID with cache-aside.
+// GetProduct returns a single product by ID with caching.
 func (h *ProductHandler) GetProduct(c *fiber.Ctx) error {
 	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
 	if err != nil {
-		return utils.Error(c, http.StatusBadRequest, "invalid product id")
+		return utils.ErrorResponse(c, fiber.StatusBadRequest, "invalid product ID")
 	}
 
 	cacheKey := fmt.Sprintf(productCacheKey, id)
 
-	// Cache-aside: try Redis first.
-	cached, cacheErr := h.Cache.Get(cacheKey)
-	if cacheErr == nil && cached != "" {
+	// Try cache first
+	cached, err := h.cache.Get(c.Context(), cacheKey)
+	if err == nil && cached != "" {
 		var product models.Product
-		if json.Unmarshal([]byte(cached), &product) == nil {
-			return utils.Success(c, product)
+		if err := json.Unmarshal([]byte(cached), &product); err == nil {
+			return utils.SuccessResponse(c, fiber.StatusOK, "product retrieved (cached)", product)
 		}
 	}
 
 	var product models.Product
-	if err := h.DB.Preload("User").First(&product, id).Error; err != nil {
-		return utils.Error(c, http.StatusNotFound, "product not found")
+	if result := h.db.First(&product, id); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusNotFound, "product not found")
 	}
 
-	// Populate cache.
+	// Populate cache
 	if data, err := json.Marshal(product); err == nil {
-		_ = h.Cache.Set(cacheKey, string(data), productCacheTTL)
+		_ = h.cache.Set(c.Context(), cacheKey, string(data), cacheTTL)
 	}
 
-	return utils.Success(c, product)
+	return utils.SuccessResponse(c, fiber.StatusOK, "product retrieved", product)
 }
 
-// CreateProduct creates a new product and invalidates the list cache.
+// CreateProduct creates a new product for the authenticated user.
 func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
-	var input CreateProductInput
-	if err := c.BodyParser(&input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, "invalid request body")
+	var req CreateProductRequest
+	if err := c.BodyParser(&req); err != nil {
+		return utils.ErrorResponse(c, fiber.StatusBadRequest, "invalid request body")
 	}
 
-	if err := validate.Struct(input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, err.Error())
+	if errs := utils.ValidateStruct(req); errs != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"success": false,
+			"errors":  errs,
+		})
 	}
 
-	userID, _ := c.Locals("userID").(uint)
+	userID, ok := c.Locals("user_id").(float64)
+	if !ok {
+		return utils.ErrorResponse(c, fiber.StatusUnauthorized, "unauthorized")
+	}
 
 	product := models.Product{
-		Name:        input.Name,
-		Description: input.Description,
-		Price:       input.Price,
-		SKU:         input.SKU,
-		UserID:      userID,
+		Name:        req.Name,
+		Description: req.Description,
+		Price:       req.Price,
+		SKU:         req.SKU,
+		UserID:      uint(userID),
 	}
 
-	if err := h.DB.Create(&product).Error; err != nil {
-		return utils.Error(c, http.StatusInternalServerError, "failed to create product")
+	if result := h.db.Create(&product); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusInternalServerError, "failed to create product")
 	}
 
-	// Invalidate list cache.
-	_ = h.Cache.DeleteByPattern("products:list*")
+	// Invalidate products list cache
+	_ = h.cache.InvalidatePattern(c.Context(), "products:*")
 
-	return c.Status(http.StatusCreated).JSON(fiber.Map{
-		"success": true,
-		"data":    product,
-	})
+	return utils.SuccessResponse(c, fiber.StatusCreated, "product created", product)
 }
 
-// UpdateProduct updates an existing product and invalidates relevant caches.
+// UpdateProduct updates an existing product owned by the authenticated user.
 func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
 	if err != nil {
-		return utils.Error(c, http.StatusBadRequest, "invalid product id")
+		return utils.ErrorResponse(c, fiber.StatusBadRequest, "invalid product ID")
+	}
+
+	var req UpdateProductRequest
+	if err := c.BodyParser(&req); err != nil {
+		return utils.ErrorResponse(c, fiber.StatusBadRequest, "invalid request body")
+	}
+
+	if errs := utils.ValidateStruct(req); errs != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"success": false,
+			"errors":  errs,
+		})
+	}
+
+	userID, ok := c.Locals("user_id").(float64)
+	if !ok {
+		return utils.ErrorResponse(c, fiber.StatusUnauthorized, "unauthorized")
 	}
 
 	var product models.Product
-	if err := h.DB.First(&product, id).Error; err != nil {
-		return utils.Error(c, http.StatusNotFound, "product not found")
+	if result := h.db.First(&product, id); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusNotFound, "product not found")
 	}
 
-	var input UpdateProductInput
-	if err := c.BodyParser(&input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, "invalid request body")
+	if product.UserID != uint(userID) {
+		return utils.ErrorResponse(c, fiber.StatusForbidden, "not authorized to update this product")
 	}
 
-	if err := validate.Struct(input); err != nil {
-		return utils.Error(c, http.StatusBadRequest, err.Error())
+	updates := make(map[string]interface{})
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.Price != nil {
+		updates["price"] = *req.Price
+	}
+	if req.SKU != nil {
+		updates["sku"] = *req.SKU
 	}
 
-	if input.Name != nil {
-		product.Name = *input.Name
-	}
-	if input.Description != nil {
-		product.Description = *input.Description
-	}
-	if input.Price != nil {
-		product.Price = *input.Price
-	}
-	if input.SKU != nil {
-		product.SKU = *input.SKU
+	if result := h.db.Model(&product).Updates(updates); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusInternalServerError, "failed to update product")
 	}
 
-	if err := h.DB.Save(&product).Error; err != nil {
-		return utils.Error(c, http.StatusInternalServerError, "failed to update product")
-	}
+	// Invalidate relevant caches
+	_ = h.cache.InvalidatePattern(c.Context(), "products:*")
 
-	// Invalidate both item and list caches.
-	_ = h.Cache.Delete(fmt.Sprintf(productCacheKey, id))
-	_ = h.Cache.DeleteByPattern("products:list*")
-
-	return utils.Success(c, product)
+	return utils.SuccessResponse(c, fiber.StatusOK, "product updated", product)
 }
 
-// DeleteProduct removes a product and invalidates relevant caches.
+// DeleteProduct removes a product owned by the authenticated user.
 func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
 	if err != nil {
-		return utils.Error(c, http.StatusBadRequest, "invalid product id")
+		return utils.ErrorResponse(c, fiber.StatusBadRequest, "invalid product ID")
+	}
+
+	userID, ok := c.Locals("user_id").(float64)
+	if !ok {
+		return utils.ErrorResponse(c, fiber.StatusUnauthorized, "unauthorized")
 	}
 
 	var product models.Product
-	if err := h.DB.First(&product, id).Error; err != nil {
-		return utils.Error(c, http.StatusNotFound, "product not found")
+	if result := h.db.First(&product, id); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusNotFound, "product not found")
 	}
 
-	if err := h.DB.Delete(&product).Error; err != nil {
-		return utils.Error(c, http.StatusInternalServerError, "failed to delete product")
+	if product.UserID != uint(userID) {
+		return utils.ErrorResponse(c, fiber.StatusForbidden, "not authorized to delete this product")
 	}
 
-	// Invalidate both item and list caches.
-	_ = h.Cache.Delete(fmt.Sprintf(productCacheKey, id))
-	_ = h.Cache.DeleteByPattern("products:list*")
+	if result := h.db.Delete(&product); result.Error != nil {
+		return utils.ErrorResponse(c, fiber.StatusInternalServerError, "failed to delete product")
+	}
 
-	return utils.Success(c, fiber.Map{"message": "product deleted"})
+	// Invalidate relevant caches
+	_ = h.cache.InvalidatePattern(c.Context(), "products:*")
+
+	return utils.SuccessResponse(c, fiber.StatusOK, "product deleted", nil)
 }

@@ -2,15 +2,15 @@ package models
 
 import "time"
 
-// Product represents a catalog item owned by a user.
+// Product represents a product owned by a user.
 type Product struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
-	Name        string    `gorm:"not null" json:"name" validate:"required"`
-	Description string    `json:"description"`
-	Price       float64   `gorm:"not null" json:"price" validate:"required,gt=0"`
-	SKU         string    `gorm:"uniqueIndex" json:"sku"`
-	UserID      uint      `json:"user_id"`
-	User        User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Name        string    `gorm:"size:255;not null" json:"name"`
+	Description string    `gorm:"type:text" json:"description"`
+	Price       float64   `gorm:"type:decimal(10,2);not null" json:"price"`
+	SKU         string    `gorm:"uniqueIndex;size:100;not null" json:"sku"`
+	UserID      uint      `gorm:"index;not null" json:"user_id"`
+	User        User      `gorm:"foreignKey:UserID" json:"-"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
