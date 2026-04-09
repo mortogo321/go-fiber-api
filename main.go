@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -18,30 +20,29 @@ import (
 )
 
 func main() {
-	// ── Configuration ──────────────────────────────────────────────────
+	// Load configuration from environment variables.
 	cfg := config.LoadConfig()
 
-	// ── Database ───────────────────────────────────────────────────────
-	if err := database.InitDB(cfg); err != nil {
-		log.Fatalf("Database initialization failed: %v", err)
+	// Initialize PostgreSQL via GORM.
+	db, err := database.InitDB(cfg)
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
 	}
 
-	// ── Redis ──────────────────────────────────────────────────────────
-	if err := database.InitRedis(cfg); err != nil {
-		log.Fatalf("Redis initialization failed: %v", err)
+	// Initialize Redis client.
+	rdb, err := database.InitRedis(cfg)
+	if err != nil {
+		log.Fatalf("failed to connect to redis: %v", err)
 	}
 
-	// ── Services ───────────────────────────────────────────────────────
-	cacheService := services.NewCacheService(database.RedisClient)
+	// Build shared services.
+	cacheService := services.NewCacheService(rdb)
 
-	// ── Handlers ───────────────────────────────────────────────────────
-	authHandler := handlers.NewAuthHandler(cfg.JWTSecret)
-	productHandler := handlers.NewProductHandler(cacheService)
-
-	// ── Fiber App ──────────────────────────────────────────────────────
+	// Create Fiber app.
 	app := fiber.New(fiber.Config{
-		AppName:      "Go Fiber API",
-		ErrorHandler: customErrorHandler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
 	})
 
 	// Global middleware.
@@ -49,64 +50,59 @@ func main() {
 	app.Use(cors.New())
 	app.Use(middleware.RequestLogger())
 
-	// ── Health Check ───────────────────────────────────────────────────
+	// Health check.
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	// ── API Routes ─────────────────────────────────────────────────────
-	api := app.Group("/api")
-
-	// Public auth routes.
-	auth := api.Group("/auth")
+	// --- Auth routes (public) ---
+	authHandler := handlers.NewAuthHandler(db, cfg)
+	auth := app.Group("/api/auth")
 	auth.Post("/register", authHandler.Register)
 	auth.Post("/login", authHandler.Login)
+	auth.Get("/profile", middleware.JWTMiddleware(cfg.JWTSecret), authHandler.GetProfile)
 
-	// Protected routes — require JWT.
-	protected := api.Group("", middleware.JWTMiddleware(cfg.JWTSecret))
-
-	// User routes.
-	users := protected.Group("/users")
-	users.Get("/profile", authHandler.GetProfile)
-
-	// Product routes.
-	products := protected.Group("/products")
+	// --- Product routes (protected) ---
+	productHandler := handlers.NewProductHandler(db, cacheService)
+	products := app.Group("/api/products", middleware.JWTMiddleware(cfg.JWTSecret))
 	products.Get("/", productHandler.GetProducts)
 	products.Get("/:id", productHandler.GetProduct)
 	products.Post("/", productHandler.CreateProduct)
 	products.Put("/:id", productHandler.UpdateProduct)
 	products.Delete("/:id", productHandler.DeleteProduct)
 
-	// ── Graceful Shutdown ──────────────────────────────────────────────
+	// Graceful shutdown: listen for SIGINT / SIGTERM.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		if err := app.Listen(":" + cfg.Port); err != nil {
-			log.Fatalf("Server failed to start: %v", err)
+			log.Fatalf("server error: %v", err)
 		}
 	}()
 
-	log.Printf("Server is running on port %s", cfg.Port)
+	log.Printf("server started on port %s", cfg.Port)
 
 	<-quit
-	log.Println("Shutting down server...")
+	log.Println("shutting down server...")
 
-	if err := app.Shutdown(); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+		log.Fatalf("server forced shutdown: %v", err)
 	}
 
-	log.Println("Server stopped gracefully")
-}
-
-// customErrorHandler returns a consistent JSON error for unhandled Fiber errors.
-func customErrorHandler(c *fiber.Ctx, err error) error {
-	code := fiber.StatusInternalServerError
-	if e, ok := err.(*fiber.Error); ok {
-		code = e.Code
+	// Close Redis connection.
+	if err := rdb.Close(); err != nil {
+		log.Printf("error closing redis: %v", err)
 	}
-	return c.Status(code).JSON(fiber.Map{
-		"success": false,
-		"error":   err.Error(),
-	})
+
+	// Close database connection.
+	sqlDB, _ := db.DB()
+	if sqlDB != nil {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("error closing database: %v", err)
+		}
+	}
+
+	_ = context.Background() // satisfy import for future use
+	log.Println("server exited gracefully")
 }

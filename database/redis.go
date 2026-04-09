@@ -10,25 +10,25 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisClient is the global Redis client instance.
-var RedisClient *redis.Client
-
-// InitRedis parses the Redis URL, creates a client, and verifies connectivity.
-func InitRedis(cfg *config.Config) error {
-	opt, err := redis.ParseURL(cfg.RedisURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse redis URL: %w", err)
-	}
-
-	RedisClient = redis.NewClient(opt)
+// InitRedis creates a go-redis client and verifies connectivity with a PING.
+func InitRedis(cfg *config.Config) (*redis.Client, error) {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         cfg.RedisURL,
+		Password:     "",
+		DB:           0,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		PoolSize:     10,
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := RedisClient.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("failed to ping redis: %w", err)
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("redis ping: %w", err)
 	}
 
-	log.Println("Redis connected successfully")
-	return nil
+	log.Println("redis connected")
+	return rdb, nil
 }

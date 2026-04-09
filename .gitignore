@@ -1,19 +1,12 @@
 # Binary
-server
 go-fiber-api
 
 # Environment
 .env
 
-# Temp
+# Temp / IDE
 tmp/
-
-# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS
-.DS_Store
-Thumbs.db

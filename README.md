@@ -1,147 +1,98 @@
 # Go Fiber REST API
 
-A production-ready REST API built with Go Fiber, featuring JWT authentication, PostgreSQL persistence via GORM, and Redis cache-aside pattern.
+A production-ready REST API proof-of-concept built with [Go Fiber](https://gofiber.io/), demonstrating JWT authentication, PostgreSQL persistence via GORM, Redis cache-aside caching, and a Docker multi-stage build.
 
 ## Project Structure
 
 ```
 .
-├── config/
-│   └── config.go          # Environment-based configuration
-├── database/
-│   ├── database.go        # PostgreSQL connection & migrations
-│   └── redis.go           # Redis client initialization
-├── handlers/
-│   ├── auth.go            # Register, Login, GetProfile
-│   └── product.go         # CRUD with cache-aside pattern
-├── middleware/
-│   ├── auth.go            # JWT Bearer token validation
-│   └── logger.go          # Request logging with latency
-├── models/
-│   ├── user.go            # User entity
-│   └── product.go         # Product entity
-├── services/
-│   └── cache.go           # Redis cache abstraction
-├── utils/
-│   ├── jwt.go             # Token generation & validation
-│   └── response.go        # Standardized API responses
-├── docker-compose.yml     # App + PostgreSQL + Redis
-├── Dockerfile             # Multi-stage build
-├── main.go                # Application entrypoint
-├── go.mod                 # Go module definition
-└── .env.example           # Environment variable template
+├── config/          # Environment-based configuration
+│   └── config.go
+├── database/        # Database and cache client initialization
+│   ├── database.go
+│   └── redis.go
+├── handlers/        # HTTP request handlers
+│   ├── auth.go
+│   └── product.go
+├── middleware/      # Fiber middleware (JWT guard, request logger)
+│   ├── auth.go
+│   └── logger.go
+├── models/          # GORM models
+│   ├── user.go
+│   └── product.go
+├── services/        # Shared services (cache helper)
+│   └── cache.go
+├── utils/           # Helpers (response builders, JWT utilities)
+│   ├── jwt.go
+│   └── response.go
+├── docker-compose.yml
+├── Dockerfile
+├── .env.example
+├── .gitignore
+├── go.mod
+├── go.sum
+└── main.go
 ```
 
 ## API Endpoints
 
-| Method | Path                  | Auth     | Description          |
-|--------|-----------------------|----------|----------------------|
-| POST   | `/api/auth/register`  | Public   | Create new account   |
-| POST   | `/api/auth/login`     | Public   | Authenticate & get JWT |
-| GET    | `/api/users/profile`  | Bearer   | Get current user profile |
-| GET    | `/api/products`       | Bearer   | List all products    |
-| GET    | `/api/products/:id`   | Bearer   | Get product by ID    |
-| POST   | `/api/products`       | Bearer   | Create product       |
-| PUT    | `/api/products/:id`   | Bearer   | Update product       |
-| DELETE | `/api/products/:id`   | Bearer   | Delete product       |
-
-## Architecture: Cache-Aside Pattern
-
-```
-┌────────┐     ┌──────────┐     ┌───────────┐
-│ Client │────>│  Fiber   │────>│  Handler  │
-└────────┘     │  Router  │     └─────┬─────┘
-               └──────────┘           │
-                                      │  1. Check cache
-                                      v
-                                ┌───────────┐
-                           ┌───>│   Redis    │
-                           │    │  (Cache)   │
-                           │    └───────────┘
-                           │          │
-                           │    2. Cache miss?
-                           │          v
-                           │    ┌───────────┐
-                           │    │ PostgreSQL │
-                           │    │   (GORM)  │
-                           │    └─────┬─────┘
-                           │          │
-                           │    3. Store in cache
-                           └──────────┘
-                              (TTL: 5min)
-
-Write operations:
-  Create/Update/Delete ──> DB write ──> Invalidate related cache keys
-```
-
-**Key decisions:**
-
-- **Cache-aside (lazy-loading):** Data is loaded into cache only on read misses, keeping the cache lean.
-- **TTL-based expiry (5 min):** Balances freshness with performance; stale reads are bounded.
-- **Write-through invalidation:** Mutations immediately delete affected cache keys, ensuring the next read fetches fresh data.
+| Method | Path               | Auth     | Description             |
+|--------|--------------------|----------|-------------------------|
+| POST   | `/api/auth/register` | Public   | Register a new user     |
+| POST   | `/api/auth/login`    | Public   | Login and receive JWT   |
+| GET    | `/api/auth/profile`  | Bearer   | Get current user profile|
+| GET    | `/api/products`      | Bearer   | List products (cached)  |
+| GET    | `/api/products/:id`  | Bearer   | Get product by ID (cached) |
+| POST   | `/api/products`      | Bearer   | Create a product        |
+| PUT    | `/api/products/:id`  | Bearer   | Update a product        |
+| DELETE | `/api/products/:id`  | Bearer   | Delete a product        |
 
 ## Quick Start
 
-### Prerequisites
-
-- Docker & Docker Compose
-
-### Run
+### With Docker Compose (recommended)
 
 ```bash
-# Copy environment variables
 cp .env.example .env
-
-# Start all services
 docker-compose up --build
-
-# API is available at http://localhost:3000
 ```
 
-### Example Requests
+The API will be available at `http://localhost:3000`.
+
+### Local Development
 
 ```bash
-# Register
-curl -X POST http://localhost:3000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"secret123","name":"John"}'
-
-# Login
-curl -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"secret123"}'
-
-# Use the returned token for protected routes
-TOKEN="<jwt_token_from_login>"
-
-# Get profile
-curl http://localhost:3000/api/users/profile \
-  -H "Authorization: Bearer $TOKEN"
-
-# Create product
-curl -X POST http://localhost:3000/api/products \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Widget","description":"A fine widget","price":29.99,"sku":"WDG-001"}'
-
-# List products
-curl http://localhost:3000/api/products \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### Development (without Docker)
-
-```bash
-# Requires Go 1.23+, running PostgreSQL, and running Redis
-
-export DB_HOST=localhost DB_PORT=5432 DB_USER=postgres DB_PASSWORD=postgres DB_NAME=fiber_api
-export REDIS_URL=redis://localhost:6379
-export JWT_SECRET=your-secret-key
-export PORT=3000
-
+# Ensure PostgreSQL and Redis are running
+cp .env.example .env
+# Edit .env with your local connection details
+go mod tidy
 go run main.go
 ```
 
-## License
+## Architecture Decisions
 
-MIT
+### Why Fiber?
+
+Fiber is built on top of **fasthttp**, the fastest HTTP engine for Go. It provides an Express-like API that is intuitive for developers coming from Node.js while delivering significantly better throughput than net/http-based frameworks. For a REST API POC where raw performance and developer ergonomics both matter, Fiber strikes the right balance.
+
+### Why GORM?
+
+GORM is the most mature ORM in the Go ecosystem. It handles migrations, associations, hooks, and query building with a clean chainable API. For a POC that needs to demonstrate relational data (users owning products) without hand-writing SQL, GORM reduces boilerplate while remaining transparent about the queries it generates.
+
+### Cache-Aside Pattern
+
+The product endpoints implement a **cache-aside** (lazy-loading) strategy:
+
+1. **Read path** -- check Redis first; on a cache miss, query PostgreSQL, then populate Redis with a TTL.
+2. **Write path** -- after any mutation (create/update/delete), invalidate the relevant cache keys so subsequent reads fetch fresh data.
+
+This keeps reads fast without risking stale data on writes. It is the simplest caching pattern to reason about and is appropriate for workloads where reads vastly outnumber writes.
+
+### Graceful Shutdown
+
+The application listens for `SIGINT` and `SIGTERM`, then calls `app.ShutdownWithTimeout` to drain in-flight requests before closing database and Redis connections. This ensures zero dropped requests during deployments.
+
+### Docker Multi-Stage Build
+
+The Dockerfile uses a two-stage build:
+- **Builder stage** -- compiles a statically-linked binary with `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
+- **Production stage** -- copies the binary into a minimal `alpine:3.20` image running as a non-root user, producing a final image under 20 MB.
