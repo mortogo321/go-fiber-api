@@ -14,8 +14,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/mortogo321/go-fiber-api/models"
-	"github.com/mortogo321/go-fiber-api/services"
+	"github.com/mor-tesla/go-fiber-api/models"
+	"github.com/mor-tesla/go-fiber-api/services"
 )
 
 func setupRedisClient(t *testing.T) *redis.Client {

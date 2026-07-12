@@ -14,8 +14,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/mortogo321/go-fiber-api/config"
-	"github.com/mortogo321/go-fiber-api/models"
+	"github.com/mor-tesla/go-fiber-api/config"
+	"github.com/mor-tesla/go-fiber-api/models"
 )
 
 // setupTestDB creates a connection to the test database and auto-migrates.
