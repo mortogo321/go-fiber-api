@@ -67,7 +67,7 @@ func TestGetProducts_ReturnsList(t *testing.T) {
 	db.Create(&models.Product{Name: "Widget", Price: 9.99, SKU: "WDG-001", UserID: user.ID})
 	db.Create(&models.Product{Name: "Gadget", Price: 19.99, SKU: "GDG-001", UserID: user.ID})
 
-	req := httptest.NewRequest(http.MethodGet, "/products", nil)
+	req := httptest.NewRequest(http.MethodGet, "/products", http.NoBody)
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -97,6 +97,7 @@ func TestCreateProduct_ValidatesInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusUnprocessableEntity {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnprocessableEntity, resp.StatusCode)
@@ -121,6 +122,7 @@ func TestCreateProduct_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusCreated {
 		t.Errorf("expected status %d, got %d", fiber.StatusCreated, resp.StatusCode)
@@ -131,8 +133,10 @@ func TestCacheInvalidation_OnCreate(t *testing.T) {
 	app, _, cache := setupProductApp(t)
 
 	// Populate cache by listing products.
-	listReq := httptest.NewRequest(http.MethodGet, "/products", nil)
-	_, _ = app.Test(listReq, -1)
+	listReq := httptest.NewRequest(http.MethodGet, "/products", http.NoBody)
+	if listResp, err := app.Test(listReq, -1); err == nil {
+		listResp.Body.Close()
+	}
 
 	// Verify cache is populated.
 	cached, err := cache.Get(context.Background(), productsCacheKey)
@@ -147,7 +151,9 @@ func TestCacheInvalidation_OnCreate(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 	createReq := httptest.NewRequest(http.MethodPost, "/products", bytes.NewReader(body))
 	createReq.Header.Set("Content-Type", "application/json")
-	_, _ = app.Test(createReq, -1)
+	if createResp, err := app.Test(createReq, -1); err == nil {
+		createResp.Body.Close()
+	}
 
 	// Cache should be invalidated.
 	cached, err = cache.Get(context.Background(), productsCacheKey)
@@ -166,15 +172,18 @@ func TestCacheInvalidation_OnDelete(t *testing.T) {
 	db.Create(&product)
 
 	// Populate cache.
-	listReq := httptest.NewRequest(http.MethodGet, "/products", nil)
-	_, _ = app.Test(listReq, -1)
+	listReq := httptest.NewRequest(http.MethodGet, "/products", http.NoBody)
+	if listResp, err := app.Test(listReq, -1); err == nil {
+		listResp.Body.Close()
+	}
 
 	// Delete the product.
-	delReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/products/%d", product.ID), nil)
+	delReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/products/%d", product.ID), http.NoBody)
 	resp, err := app.Test(delReq, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusOK {
 		t.Errorf("expected status %d, got %d", fiber.StatusOK, resp.StatusCode)

@@ -23,7 +23,7 @@ func (s *CacheService) Get(ctx context.Context, key string) (string, error) {
 }
 
 // Set stores a value in the cache with the given TTL.
-func (s *CacheService) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
+func (s *CacheService) Set(ctx context.Context, key, value string, ttl time.Duration) error {
 	return s.client.Set(ctx, key, value, ttl).Err()
 }
 

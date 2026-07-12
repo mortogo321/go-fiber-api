@@ -47,7 +47,7 @@ func setupAuthTestApp() *fiber.App {
 func TestJWTMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 	app := setupAuthTestApp()
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequest(http.MethodGet, "/protected", http.NoBody)
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -61,7 +61,9 @@ func TestJWTMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 
 	if result["success"] != false {
 		t.Errorf("expected success false, got %v", result["success"])
@@ -71,13 +73,14 @@ func TestJWTMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 func TestJWTMiddleware_InvalidToken_Returns401(t *testing.T) {
 	app := setupAuthTestApp()
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequest(http.MethodGet, "/protected", http.NoBody)
 	req.Header.Set("Authorization", "Bearer invalid-token-string")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnauthorized, resp.StatusCode)
@@ -90,13 +93,14 @@ func TestJWTMiddleware_ExpiredToken_Returns401(t *testing.T) {
 	// Generate a token that expired 1 hour ago.
 	expiredToken := generateTestToken(t, testJWTSecret, 1, "user", -1*time.Hour)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequest(http.MethodGet, "/protected", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+expiredToken)
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnauthorized, resp.StatusCode)
@@ -108,7 +112,7 @@ func TestJWTMiddleware_ValidToken_SetsUserIDInLocals(t *testing.T) {
 
 	validToken := generateTestToken(t, testJWTSecret, 42, "admin", 1*time.Hour)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequest(http.MethodGet, "/protected", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+validToken)
 
 	resp, err := app.Test(req, -1)
@@ -124,7 +128,9 @@ func TestJWTMiddleware_ValidToken_SetsUserIDInLocals(t *testing.T) {
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 
 	userID, ok := result["user_id"].(float64)
 	if !ok || userID != 42 {
@@ -143,13 +149,14 @@ func TestJWTMiddleware_WrongSecret_Returns401(t *testing.T) {
 	// Sign with a different secret.
 	tokenWithWrongSecret := generateTestToken(t, "different-secret", 1, "user", 1*time.Hour)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequest(http.MethodGet, "/protected", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+tokenWithWrongSecret)
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnauthorized, resp.StatusCode)
@@ -159,13 +166,14 @@ func TestJWTMiddleware_WrongSecret_Returns401(t *testing.T) {
 func TestJWTMiddleware_MalformedAuthHeader_Returns401(t *testing.T) {
 	app := setupAuthTestApp()
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := httptest.NewRequest(http.MethodGet, "/protected", http.NoBody)
 	req.Header.Set("Authorization", "NotBearer sometoken")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	// The middleware checks for "Bearer" prefix; "NotBearer" should still
 	// attempt to parse but fail since it is not a valid JWT.

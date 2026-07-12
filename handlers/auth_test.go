@@ -121,6 +121,7 @@ func TestRegister_DuplicateEmail_Returns409(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusConflict {
 		t.Errorf("expected status %d, got %d", fiber.StatusConflict, resp.StatusCode)
@@ -195,6 +196,7 @@ func TestLogin_WrongPassword_Returns401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnauthorized, resp.StatusCode)
@@ -214,6 +216,7 @@ func TestLogin_NonExistentUser_Returns401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != fiber.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnauthorized, resp.StatusCode)
