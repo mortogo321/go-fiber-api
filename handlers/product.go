@@ -9,9 +9,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 
-	"github.com/mor-tesla/go-fiber-api/models"
-	"github.com/mor-tesla/go-fiber-api/services"
-	"github.com/mor-tesla/go-fiber-api/utils"
+	"github.com/mortogo321/go-fiber-api/models"
+	"github.com/mortogo321/go-fiber-api/services"
+	"github.com/mortogo321/go-fiber-api/utils"
 )
 
 type ProductHandler struct {

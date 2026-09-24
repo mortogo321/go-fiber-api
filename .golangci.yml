@@ -1,19 +1,30 @@
+version: "2"
 run:
   timeout: 5m
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
     - gocritic
-    - gofmt
-    - goimports
     - misspell
     - bodyclose
+    - copyloopvar
     - noctx
-linters-settings:
-  gocritic:
-    enabled-tags: [diagnostic, style, performance]
+    - perfsprint
+    - unconvert
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: github.com/mortogo321/go-fiber-api

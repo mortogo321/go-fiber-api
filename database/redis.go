@@ -4,8 +4,9 @@ import (
 	"context"
 	"log"
 
-	"github.com/mor-tesla/go-fiber-api/config"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mortogo321/go-fiber-api/config"
 )
 
 // ConnectRedis initializes and verifies a Redis client connection.

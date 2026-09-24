@@ -1,5 +1,9 @@
 # Go Fiber REST API
 
+![CI](https://github.com/mortogo321/go-fiber-api/actions/workflows/ci.yml/badge.svg)
+![Go](https://img.shields.io/badge/go-1.27-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 A production-ready REST API proof of concept built with Go Fiber v2, featuring JWT authentication, PostgreSQL with GORM, Redis caching, and Docker multi-stage builds.
 
 ## Architecture
@@ -59,9 +63,11 @@ A production-ready REST API proof of concept built with Go Fiber v2, featuring J
 ├── utils/
 │   ├── response.go         # Standardized JSON response helpers
 │   └── validator.go        # Struct validation with go-playground/validator
-├── Dockerfile              # Multi-stage build (golang:1.23-alpine -> alpine:3.19)
-├── docker-compose.yml      # App + PostgreSQL 17 + Redis 7
+├── Dockerfile              # Multi-stage build (golang:1.27-alpine -> alpine:3.22, non-root + HEALTHCHECK)
+├── docker-compose.yml      # App + PostgreSQL 17 + Redis 8
 ├── .env.example            # Environment variable template
+├── .dockerignore
+├── LICENSE (MIT)
 └── .gitignore
 ```
 
@@ -69,16 +75,17 @@ A production-ready REST API proof of concept built with Go Fiber v2, featuring J
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.27+
 - Docker & Docker Compose
 - PostgreSQL 17 (or use Docker)
-- Redis 7 (or use Docker)
+- Redis 8 (or use Docker)
 
 ### Run with Docker Compose
 
 ```bash
 cp .env.example .env
-docker-compose up --build
+# Set a strong JWT_SECRET and DB_PASSWORD in .env for anything beyond local dev
+docker compose up --build
 ```
 
 The API will be available at `http://localhost:3000`.
@@ -127,11 +134,23 @@ go run main.go
 
 | Variable      | Description             | Default          |
 |---------------|-------------------------|------------------|
+| `APP_ENV`     | `development`/`production`/`test` | `development` |
 | `PORT`        | Server port             | `3000`           |
 | `DB_HOST`     | PostgreSQL host         | `localhost`      |
 | `DB_PORT`     | PostgreSQL port         | `5432`           |
 | `DB_USER`     | PostgreSQL user         | `postgres`       |
 | `DB_PASSWORD` | PostgreSQL password     | `postgres`       |
 | `DB_NAME`     | PostgreSQL database     | `gofiber`        |
+| `DB_SSLMODE`  | PostgreSQL SSL mode (`disable` locally, `require` in prod) | `disable` |
 | `REDIS_URL`   | Redis connection string | `localhost:6379` |
-| `JWT_SECRET`  | JWT signing key         | `changeme`       |
+| `JWT_SECRET`  | JWT signing key (must override in production) | `changeme` |
+
+## Security Notes
+
+- Security headers via Fiber helmet, request IDs, and a 100 req/min per-IP rate limiter are enabled by default.
+- Never ship the default `JWT_SECRET` — set a long random value via environment or secrets manager.
+- Compose defaults are local-dev values; override `DB_PASSWORD`/`JWT_SECRET` before exposing anything.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

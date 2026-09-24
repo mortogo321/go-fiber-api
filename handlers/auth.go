@@ -8,9 +8,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/mor-tesla/go-fiber-api/config"
-	"github.com/mor-tesla/go-fiber-api/models"
-	"github.com/mor-tesla/go-fiber-api/utils"
+	"github.com/mortogo321/go-fiber-api/config"
+	"github.com/mortogo321/go-fiber-api/models"
+	"github.com/mortogo321/go-fiber-api/utils"
 )
 
 type AuthHandler struct {

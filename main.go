@@ -1,20 +1,21 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 
-	"github.com/mor-tesla/go-fiber-api/config"
-	"github.com/mor-tesla/go-fiber-api/database"
-	"github.com/mor-tesla/go-fiber-api/handlers"
-	"github.com/mor-tesla/go-fiber-api/middleware"
-	"github.com/mor-tesla/go-fiber-api/services"
+	"github.com/mortogo321/go-fiber-api/config"
+	"github.com/mortogo321/go-fiber-api/database"
+	"github.com/mortogo321/go-fiber-api/handlers"
+	"github.com/mortogo321/go-fiber-api/middleware"
+	"github.com/mortogo321/go-fiber-api/services"
 )
 
 func main() {
@@ -30,11 +31,17 @@ func main() {
 	})
 
 	app.Use(recover.New())
-	app.Use(cors.New())
+	app.Use(requestid.New())
+	app.Use(middleware.SecurityHeaders())
+	app.Use(middleware.CORS())
+	app.Use(middleware.RateLimiter())
 	app.Use(middleware.LoggerMiddleware())
 
 	app.Get("/api/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok"})
+		return c.JSON(fiber.Map{
+			"status":  "ok",
+			"service": "go-fiber-api",
+		})
 	})
 
 	authHandler := handlers.NewAuthHandler(db, cfg)
@@ -87,7 +94,8 @@ func main() {
 func customErrorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
 
-	if e, ok := err.(*fiber.Error); ok {
+	var e *fiber.Error
+	if errors.As(err, &e) {
 		code = e.Code
 	}
 

@@ -14,13 +14,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/mor-tesla/go-fiber-api/models"
-	"github.com/mor-tesla/go-fiber-api/services"
+	"github.com/mortogo321/go-fiber-api/config"
+	"github.com/mortogo321/go-fiber-api/models"
+	"github.com/mortogo321/go-fiber-api/services"
 )
 
 func setupRedisClient(t *testing.T) *redis.Client {
 	t.Helper()
-	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	cfg := config.Load()
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisURL})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		t.Skipf("skipping: cannot connect to Redis: %v", err)
 	}
@@ -67,11 +69,12 @@ func TestGetProducts_ReturnsList(t *testing.T) {
 	db.Create(&models.Product{Name: "Widget", Price: 9.99, SKU: "WDG-001", UserID: user.ID})
 	db.Create(&models.Product{Name: "Gadget", Price: 19.99, SKU: "GDG-001", UserID: user.ID})
 
-	req := httptest.NewRequest(http.MethodGet, "/products", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/products", http.NoBody)
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusOK {
 		t.Errorf("expected status %d, got %d", fiber.StatusOK, resp.StatusCode)
@@ -90,14 +93,14 @@ func TestCreateProduct_ValidatesInput(t *testing.T) {
 	reqBody := map[string]interface{}{"description": "no name or price"}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/products", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/products", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusUnprocessableEntity {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnprocessableEntity, resp.StatusCode)
@@ -115,14 +118,14 @@ func TestCreateProduct_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/products", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/products", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusCreated {
 		t.Errorf("expected status %d, got %d", fiber.StatusCreated, resp.StatusCode)
@@ -133,9 +136,9 @@ func TestCacheInvalidation_OnCreate(t *testing.T) {
 	app, _, cache := setupProductApp(t)
 
 	// Populate cache by listing products.
-	listReq := httptest.NewRequest(http.MethodGet, "/products", http.NoBody)
+	listReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/products", http.NoBody)
 	if listResp, err := app.Test(listReq, -1); err == nil {
-		listResp.Body.Close()
+		_ = listResp.Body.Close()
 	}
 
 	// Verify cache is populated.
@@ -149,10 +152,10 @@ func TestCacheInvalidation_OnCreate(t *testing.T) {
 	// Create a product to trigger cache invalidation.
 	reqBody := CreateProductRequest{Name: "Cache Test", Price: 5.00, SKU: "CACHE-001"}
 	body, _ := json.Marshal(reqBody)
-	createReq := httptest.NewRequest(http.MethodPost, "/products", bytes.NewReader(body))
+	createReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/products", bytes.NewReader(body))
 	createReq.Header.Set("Content-Type", "application/json")
 	if createResp, err := app.Test(createReq, -1); err == nil {
-		createResp.Body.Close()
+		_ = createResp.Body.Close()
 	}
 
 	// Cache should be invalidated.
@@ -172,18 +175,18 @@ func TestCacheInvalidation_OnDelete(t *testing.T) {
 	db.Create(&product)
 
 	// Populate cache.
-	listReq := httptest.NewRequest(http.MethodGet, "/products", http.NoBody)
+	listReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/products", http.NoBody)
 	if listResp, err := app.Test(listReq, -1); err == nil {
-		listResp.Body.Close()
+		_ = listResp.Body.Close()
 	}
 
 	// Delete the product.
-	delReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/products/%d", product.ID), http.NoBody)
+	delReq := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, fmt.Sprintf("/products/%d", product.ID), http.NoBody)
 	resp, err := app.Test(delReq, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusOK {
 		t.Errorf("expected status %d, got %d", fiber.StatusOK, resp.StatusCode)

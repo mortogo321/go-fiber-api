@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,8 +15,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/mor-tesla/go-fiber-api/config"
-	"github.com/mor-tesla/go-fiber-api/models"
+	"github.com/mortogo321/go-fiber-api/config"
+	"github.com/mortogo321/go-fiber-api/models"
 )
 
 // setupTestDB creates a connection to the test database and auto-migrates.
@@ -27,7 +28,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		" password=" + cfg.DBPassword +
 		" dbname=" + cfg.DBName +
 		" port=" + cfg.DBPort +
-		" sslmode=disable"
+		" sslmode=" + cfg.DBSSLMode
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Skipf("skipping: cannot connect to test database: %v", err)
@@ -58,7 +59,7 @@ func parseResponseBody(t *testing.T, resp *http.Response) map[string]interface{}
 	if err != nil {
 		t.Fatalf("failed to read response body: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -77,13 +78,14 @@ func TestRegister_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusCreated {
 		t.Errorf("expected status %d, got %d", fiber.StatusCreated, resp.StatusCode)
@@ -114,14 +116,14 @@ func TestRegister_DuplicateEmail_Returns409(t *testing.T) {
 	}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusConflict {
 		t.Errorf("expected status %d, got %d", fiber.StatusConflict, resp.StatusCode)
@@ -143,13 +145,14 @@ func TestLogin_Success_ReturnsJWT(t *testing.T) {
 	reqBody := LoginRequest{Email: "login@example.com", Password: "password123"}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusOK {
 		t.Errorf("expected status %d, got %d", fiber.StatusOK, resp.StatusCode)
@@ -189,14 +192,14 @@ func TestLogin_WrongPassword_Returns401(t *testing.T) {
 	reqBody := LoginRequest{Email: "wrongpw@example.com", Password: "wrong-password"}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnauthorized, resp.StatusCode)
@@ -209,14 +212,14 @@ func TestLogin_NonExistentUser_Returns401(t *testing.T) {
 	reqBody := LoginRequest{Email: "nouser@example.com", Password: "password123"}
 	body, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != fiber.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", fiber.StatusUnauthorized, resp.StatusCode)
