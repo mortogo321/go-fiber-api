@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/go-playground/validator/v10 v10.30.5
-	github.com/gofiber/fiber/v2 v2.52.15
+	github.com/gofiber/fiber/v2 v2.52.16
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/redis/go-redis/v9 v9.22.0
 	golang.org/x/crypto v0.57.0
